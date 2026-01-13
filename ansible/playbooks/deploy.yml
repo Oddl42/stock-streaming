@@ -1,0 +1,6 @@
+- name: Deploy apps into k3s via Helm
+  hosts: localhost
+  become: false
+  roles:
+    - helm_repos
+    - apps

@@ -1,0 +1,20 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "stock-ui.fullname" . }}-sparkapp
+rules:
+  - apiGroups: ["sparkoperator.k8s.io"]
+    resources: ["sparkapplications"]
+    verbs: ["get","list","watch","create","delete","patch","update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "stock-ui.fullname" . }}-sparkapp
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "stock-ui.fullname" . }}
+roleRef:
+  kind: Role
+  name: {{ include "stock-ui.fullname" . }}-sparkapp
+  apiGroup: rbac.authorization.k8s.io

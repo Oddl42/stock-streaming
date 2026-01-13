@@ -1,0 +1,5 @@
+Open:
+  http://{{ .Values.ingress.host }}
+
+If you use /etc/hosts:
+  127.0.0.1  {{ .Values.ingress.host }}

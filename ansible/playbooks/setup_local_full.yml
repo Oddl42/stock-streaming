@@ -1,0 +1,325 @@
+- name: Full local setup for stock-ui (Ubuntu + k3s + Traefik + Helm + build/load + deploy)
+  hosts: localhost
+  become: true
+  gather_facts: true
+
+  vars:
+    # -------- Versions --------
+    k3s_version: "v1.29.7+k3s1"
+    helm_version: "v3.14.4"
+    kubeseal_version: "v0.26.3"
+
+    # -------- User / Paths --------
+    local_user: "{{ ansible_env.SUDO_USER | default(ansible_user_id) }}"
+    kubeconfig_user_path: "/home/{{ local_user }}/.kube/config"
+
+    project_root: "{{ playbook_dir }}/../.."     # ansible/playbooks/...
+    namespace: "stock-ui"
+    release_name: "stock-ui"
+    chart_path: "{{ project_root }}/helm/stock-ui"
+
+    # -------- Ingress --------
+    ingress_host: "stock-ui.local"
+
+    # -------- App/Image --------
+    web_image: "stock-ui:0.1.0"
+    web_dockerfile: "{{ project_root }}/docker/Dockerfile.web"
+    web_context: "{{ project_root }}"
+
+    # -------- App config (MVP) --------
+    massive_mock: "true"
+    massive_api_key: "CHANGE_ME"
+
+    # -------- Feature flags --------
+    install_k3s: true
+    install_helm: true
+    install_kubeseal: true
+    install_cluster_apps: true
+    build_and_load_images: true
+    deploy_stock_ui: true
+    update_etc_hosts: true
+
+  # Für alle kubectl/helm calls im Play:
+  environment:
+    KUBECONFIG: "{{ kubeconfig_user_path }}"
+
+  tasks:
+    - name: Update apt cache
+      ansible.builtin.apt:
+        update_cache: true
+
+    - name: Install base packages
+      ansible.builtin.apt:
+        name:
+          - git
+          - curl
+          - ca-certificates
+          - jq
+          - python3
+          - python3-venv
+          - python3-pip
+        state: present
+
+    - name: Install Docker (Ubuntu package docker.io)
+      ansible.builtin.apt:
+        name: docker.io
+        state: present
+
+    - name: Ensure docker service started/enabled
+      ansible.builtin.systemd:
+        name: docker
+        state: started
+        enabled: true
+
+    - name: Add current user to docker group
+      ansible.builtin.user:
+        name: "{{ local_user }}"
+        groups: docker
+        append: true
+
+    # ---------------- k3s ----------------
+    - name: Install k3s (single-node)
+      ansible.builtin.shell: |
+        set -euo pipefail
+        curl -sfL https://get.k3s.io | \
+          INSTALL_K3S_VERSION='{{ k3s_version }}' \
+          K3S_KUBECONFIG_MODE='644' \
+          sh -s - server
+      args:
+        executable: /bin/bash
+        creates: /usr/local/bin/k3s
+      when: install_k3s
+
+    - name: Ensure k3s service started/enabled
+      ansible.builtin.systemd:
+        name: k3s
+        state: started
+        enabled: true
+      when: install_k3s
+
+    # Wichtig: wenn k3s schon installiert war, greift K3S_KUBECONFIG_MODE evtl. nicht mehr.
+    # Dann stellen wir hier die Leserechte sicher.
+    - name: Ensure k3s kubeconfig is readable (optional but helpful)
+      ansible.builtin.file:
+        path: /etc/rancher/k3s/k3s.yaml
+        mode: "0644"
+      when: install_k3s
+
+    - name: Ensure ~/.kube exists
+      become: false
+      ansible.builtin.file:
+        path: "/home/{{ local_user }}/.kube"
+        state: directory
+        mode: "0700"
+      when: install_k3s
+
+    - name: Copy kubeconfig from k3s to user kubeconfig
+      ansible.builtin.copy:
+        src: /etc/rancher/k3s/k3s.yaml
+        dest: "{{ kubeconfig_user_path }}"
+        remote_src: true
+        owner: "{{ local_user }}"
+        group: "{{ local_user }}"
+        mode: "0600"
+      when: install_k3s
+
+    - name: Rewrite kubeconfig server to 127.0.0.1
+      become: false
+      ansible.builtin.replace:
+        path: "{{ kubeconfig_user_path }}"
+        regexp: "https://127\\.0\\.0\\.1:6443|https://.+:6443"
+        replace: "https://127.0.0.1:6443"
+      when: install_k3s
+
+    - name: Wait for Kubernetes API to be reachable
+      become: false
+      ansible.builtin.command: kubectl get nodes
+      register: kubectl_nodes
+      retries: 30
+      delay: 2
+      until: kubectl_nodes.rc == 0
+      when: install_k3s
+
+    # ---------------- Helm CLI ----------------
+    - name: Compute helm arch
+      ansible.builtin.set_fact:
+        helm_arch: "{{ 'amd64' if ansible_architecture in ['x86_64'] else 'arm64' if ansible_architecture in ['aarch64'] else ansible_architecture }}"
+      when: install_helm
+
+    - name: Download helm tarball
+      ansible.builtin.get_url:
+        url: "https://get.helm.sh/helm-{{ helm_version }}-linux-{{ helm_arch }}.tar.gz"
+        dest: "/tmp/helm-{{ helm_version }}.tar.gz"
+        mode: "0644"
+      when: install_helm
+
+    - name: Extract helm
+      ansible.builtin.unarchive:
+        src: "/tmp/helm-{{ helm_version }}.tar.gz"
+        dest: "/tmp"
+        remote_src: true
+      when: install_helm
+
+    - name: Install helm binary
+      ansible.builtin.copy:
+        src: "/tmp/linux-{{ helm_arch }}/helm"
+        dest: "/usr/local/bin/helm"
+        mode: "0755"
+        remote_src: true
+      when: install_helm
+
+    # ---------------- kubeseal CLI ----------------
+    - name: Compute kubeseal arch
+      ansible.builtin.set_fact:
+        kubeseal_arch: "{{ 'amd64' if ansible_architecture in ['x86_64'] else 'arm64' if ansible_architecture in ['aarch64'] else ansible_architecture }}"
+      when: install_kubeseal
+
+    - name: Download kubeseal
+      ansible.builtin.get_url:
+        url: "https://github.com/bitnami-labs/sealed-secrets/releases/download/{{ kubeseal_version }}/kubeseal-{{ kubeseal_version | regex_replace('^v','') }}-linux-{{ kubeseal_arch }}.tar.gz"
+        dest: "/tmp/kubeseal-{{ kubeseal_version }}.tar.gz"
+        mode: "0644"
+      when: install_kubeseal
+
+    - name: Ensure kubeseal temp dir exists
+      ansible.builtin.file:
+        path: /tmp/kubeseal
+        state: directory
+        mode: "0755"
+      when: install_kubeseal
+
+    - name: Extract kubeseal
+      ansible.builtin.unarchive:
+        src: "/tmp/kubeseal-{{ kubeseal_version }}.tar.gz"
+        dest: "/tmp/kubeseal"
+        remote_src: true
+      when: install_kubeseal
+
+    - name: Install kubeseal binary
+      ansible.builtin.copy:
+        src: "/tmp/kubeseal/kubeseal"
+        dest: "/usr/local/bin/kubeseal"
+        mode: "0755"
+        remote_src: true
+      when: install_kubeseal
+
+    # ---------------- /etc/hosts ----------------
+    - name: Ensure /etc/hosts contains ingress host mapping
+      ansible.builtin.lineinfile:
+        path: /etc/hosts
+        line: "127.0.0.1 {{ ingress_host }}"
+        state: present
+      when: update_etc_hosts
+
+    # ---------------- Cluster apps ----------------
+    - name: Ensure namespace exists
+      become: false
+      ansible.builtin.command: kubectl create namespace {{ namespace }}
+      register: ns_create
+      failed_when: ns_create.rc != 0 and ("AlreadyExists" not in (ns_create.stderr | default('')))
+      changed_when: ns_create.rc == 0
+      when: install_cluster_apps
+
+    - name: Add Helm repo - bitnami
+      become: false
+      ansible.builtin.command: helm repo add bitnami https://charts.bitnami.com/bitnami
+      register: repo_bitnami
+      failed_when: repo_bitnami.rc != 0 and ("already exists" not in (repo_bitnami.stderr | lower | default('')))
+      changed_when: repo_bitnami.rc == 0
+      when: install_cluster_apps
+
+    - name: Add Helm repo - sealed-secrets
+      become: false
+      ansible.builtin.command: helm repo add sealed-secrets https://bitnami-labs.github.io/sealed-secrets
+      register: repo_ss
+      failed_when: repo_ss.rc != 0 and ("already exists" not in (repo_ss.stderr | lower | default('')))
+      changed_when: repo_ss.rc == 0
+      when: install_cluster_apps
+
+    - name: Add Helm repo - spark-operator
+      become: false
+      ansible.builtin.command: helm repo add spark-operator https://kubeflow.github.io/spark-operator
+      register: repo_so
+      failed_when: repo_so.rc != 0 and ("already exists" not in (repo_so.stderr | lower | default('')))
+      changed_when: repo_so.rc == 0
+      when: install_cluster_apps
+
+    - name: Helm repo update
+      become: false
+      ansible.builtin.command: helm repo update
+      when: install_cluster_apps
+
+    - name: Install/upgrade sealed-secrets controller (kube-system)
+      become: false
+      ansible.builtin.command: >
+        helm upgrade --install sealed-secrets
+        sealed-secrets/sealed-secrets
+        -n kube-system
+      when: install_cluster_apps
+
+    - name: Install/upgrade Spark Operator
+      become: false
+      ansible.builtin.command: >
+        helm upgrade --install spark-operator
+        spark-operator/spark-operator
+        -n {{ namespace }}
+        --set sparkJobNamespace={{ namespace }}
+      when: install_cluster_apps
+
+    # ---------------- Build + Load images into k3s containerd (Option A) ----------------
+    - name: Build web image (docker build)
+      ansible.builtin.command: >
+        docker build -t {{ web_image }} -f {{ web_dockerfile }} {{ web_context }}
+      when: build_and_load_images
+
+    - name: Import web image into k3s containerd
+      ansible.builtin.shell: |
+        set -euo pipefail
+        docker save {{ web_image }} | k3s ctr images import -
+      args:
+        executable: /bin/bash
+      when: build_and_load_images
+
+    - name: Verify image exists in k3s containerd
+      ansible.builtin.shell: |
+        set -euo pipefail
+        k3s ctr images ls | grep -F "{{ web_image }}"
+      args:
+        executable: /bin/bash
+      changed_when: false
+      when: build_and_load_images
+
+    # ---------------- Deploy stock-ui via Helm ----------------
+    - name: Helm dependency update (pull postgresql dependency)
+      become: false
+      ansible.builtin.command: helm dependency update {{ chart_path }}
+      when: deploy_stock_ui
+
+    - name: Deploy/upgrade stock-ui (web + postgres)
+      become: false
+      ansible.builtin.command: >
+        helm upgrade --install {{ release_name }} {{ chart_path }}
+        -n {{ namespace }}
+        --set image.repository={{ web_image.split(':')[0] }}
+        --set image.tag={{ web_image.split(':')[1] }}
+        --set image.pullPolicy=IfNotPresent
+        --set ingress.host={{ ingress_host }}
+        --set app.env.MASSIVE_MOCK={{ massive_mock }}
+        --set app.secret.MASSIVE_API_KEY={{ massive_api_key }}
+      when: deploy_stock_ui
+
+    - name: Wait for web deployment rollout
+      become: false
+      ansible.builtin.command: kubectl -n {{ namespace }} rollout status deploy/{{ release_name }} --timeout=180s
+      register: rollout
+      retries: 5
+      delay: 5
+      until: rollout.rc == 0
+      when: deploy_stock_ui
+
+    - name: Print access info
+      become: false
+      ansible.builtin.debug:
+        msg:
+          - "Open: http://{{ ingress_host }}/tickers"
+          - "Current MASSIVE_MOCK={{ massive_mock }} (set to false once REST endpoints are implemented)"

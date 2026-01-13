@@ -1,0 +1,34 @@
+replicaCount: 1
+
+image:
+  repository: stock-ui
+  tag: "0.1.0"
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 80
+
+ingress:
+  enabled: true
+  className: traefik
+  host: stock-ui.local
+  path: /
+  pathType: Prefix
+
+app:
+  env:
+    MASSIVE_REST_BASE: "https://api.massive.com"
+    MASSIVE_MOCK: "true"  # fürs MVP lokal; später false
+  secret:
+    MASSIVE_API_KEY: "_pukfD4W7DuMalk20qAyYLrj33DXlVAD"   # MVP: plain Secret; später via sealed-secrets
+
+postgresql:
+  auth:
+    username: stock
+    password: stock
+    database: stock
+  primary:
+    persistence:
+      enabled: true
+      size: 5Gi

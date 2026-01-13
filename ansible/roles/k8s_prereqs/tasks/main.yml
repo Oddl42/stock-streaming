@@ -1,0 +1,21 @@
+- name: Ensure .kube dir exists
+  become: false
+  ansible.builtin.file:
+    path: "{{ kubeconfig_path | dirname }}"
+    state: directory
+    mode: "0700"
+
+- name: Copy kubeconfig from k3s
+  ansible.builtin.copy:
+    src: /etc/rancher/k3s/k3s.yaml
+    dest: "{{ kubeconfig_path }}"
+    remote_src: true
+    owner: "{{ ansible_user_id }}"
+    mode: "0600"
+
+- name: Rewrite kubeconfig server to 127.0.0.1 (local usage)
+  become: false
+  ansible.builtin.replace:
+    path: "{{ kubeconfig_path }}"
+    regexp: "https://127\\.0\\.0\\.1:6443|https://.+:6443"
+    replace: "https://127.0.0.1:6443"

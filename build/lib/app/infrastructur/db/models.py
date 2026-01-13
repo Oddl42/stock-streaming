@@ -5,7 +5,6 @@ Created on Thu Jan  8 16:01:17 2026
 
 @author: twi
 """
-
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from sqlalchemy import String, DateTime, Numeric, func
 

@@ -1,0 +1,11 @@
+apiVersion: v2
+name: stock-ui
+description: Flask Stock UI (Massive REST + Spark WS ingest) with Postgres
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+
+dependencies:
+  - name: postgresql
+    version: "18.1.15"        #newest: 18.2.0 # pinnen, wenn du willst
+    repository: "https://charts.bitnami.com/bitnami"

@@ -1,0 +1,17 @@
+- name: Install dependencies (curl)
+  ansible.builtin.apt:
+    name: curl
+    state: present
+    update_cache: true
+
+- name: Install k3s
+  ansible.builtin.shell: |
+    curl -sfL https://get.k3s.io | INSTALL_K3S_VERSION='{{ k3s_version }}' sh -s - server
+  args:
+    creates: /usr/local/bin/k3s
+
+- name: Ensure k3s service is running
+  ansible.builtin.systemd:
+    name: k3s
+    state: started
+    enabled: true

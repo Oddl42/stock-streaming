@@ -1,0 +1,19 @@
+k3s_version: "v1.29.7+k3s1"
+kubeconfig_path: "{{ lookup('env','HOME') }}/.kube/config"
+
+namespace: stock-ui
+
+# Helm releases
+release_stock_ui: stock-ui
+release_sealed_secrets: sealed-secrets
+release_spark_operator: spark-operator
+
+# Ingress host (für /etc/hosts)
+ingress_host: stock-ui.local
+
+# stock-ui chart
+stock_ui_chart_path: "../helm/stock-ui"
+stock_ui_image_repo: "stock-ui"
+stock_ui_image_tag: "0.1.0"
+
+massive_api_key: "_pukfD4W7DuMalk20qAyYLrj33DXlVAD"   # MVP; später via SealedSecret Workflow

@@ -8,8 +8,9 @@ Created on Thu Jan  8 16:01:09 2026
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
-from flask import current_app
 
-def make_session_factory():
-    engine = create_engine(current_app.config["DATABASE_URL"], pool_pre_ping=True)
+def make_engine(database_url: str):
+    return create_engine(database_url, pool_pre_ping=True)
+
+def make_session_factory(engine):
     return sessionmaker(bind=engine, autoflush=False, autocommit=False)

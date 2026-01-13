@@ -1,0 +1,32 @@
+# docker/Dockerfile.web
+FROM python:3.11-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+WORKDIR /app
+
+# Non-root user
+RUN addgroup --system app && adduser --system --ingroup app app
+
+# Minimal OS deps
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# 1) Metadata zuerst (besseres Layer-Caching)
+COPY pyproject.toml /app/
+
+# 2) Source-Code kopieren (für pip install . benötigt)
+COPY app /app/app
+COPY wsgi.py /app/wsgi.py
+
+# 3) Build tooling + install
+RUN pip install --no-cache-dir -U pip setuptools wheel \
+ && pip install --no-cache-dir .
+
+RUN chown -R app:app /app
+USER app
+
+EXPOSE 8000
+CMD ["gunicorn", "-w", "2", "-b", "0.0.0.0:8000", "wsgi:app"]

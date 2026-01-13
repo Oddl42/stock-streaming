@@ -1,0 +1,11 @@
+- name: Bootstrap k3s on localhost
+  hosts: localhost
+  become: true
+  roles:
+    - k3s
+
+- name: Ensure kubeconfig available for current user
+  hosts: localhost
+  become: true
+  roles:
+    - k8s_prereqs

@@ -1,0 +1,42 @@
+- name: Create namespace
+  kubernetes.core.k8s:
+    api_version: v1
+    kind: Namespace
+    name: "{{ namespace }}"
+    state: present
+
+- name: Install sealed-secrets controller
+  kubernetes.core.helm:
+    name: "{{ release_sealed_secrets }}"
+    chart_ref: sealed-secrets/sealed-secrets
+    release_namespace: kube-system
+    create_namespace: false
+    state: present
+  # kubernetes.core.helm: Chart installieren/upgraden [[1]]
+
+- name: Install Spark Operator
+  kubernetes.core.helm:
+    name: "{{ release_spark_operator }}"
+    chart_ref: spark-operator/spark-operator
+    release_namespace: "{{ namespace }}"
+    create_namespace: false
+    values:
+      sparkJobNamespace: "{{ namespace }}"
+  # ebenfalls kubernetes.core.helm [[1]]
+
+- name: Deploy stock-ui (includes Postgres dependency)
+  kubernetes.core.helm:
+    name: "{{ release_stock_ui }}"
+    chart_ref: "{{ stock_ui_chart_path }}"
+    release_namespace: "{{ namespace }}"
+    create_namespace: false
+    values:
+      image:
+        repository: "{{ stock_ui_image_repo }}"
+        tag: "{{ stock_ui_image_tag }}"
+      ingress:
+        host: "{{ ingress_host }}"
+      app:
+        secret:
+          MASSIVE_API_KEY: "{{ massive_api_key }}"
+  # kubernetes.core.helm kann values übergeben [[1]]

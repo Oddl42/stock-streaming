@@ -1,0 +1,10 @@
+- name: Add sealed-secrets helm repo
+  kubernetes.core.helm_repository:
+    name: sealed-secrets
+    repo_url: https://bitnami-labs.github.io/sealed-secrets
+  # helm_repository ist Teil kubernetes.core [[9]]
+
+- name: Add spark-operator helm repo
+  kubernetes.core.helm_repository:
+    name: spark-operator
+    repo_url: https://kubeflow.github.io/spark-operator
